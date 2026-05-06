@@ -1,12 +1,18 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"time"
 )
 
+const (
+	Rows = 10
+	Cols = 10
+)
+
 type Board struct {
-	grid [10][10]rune
+	grid [Cols][Rows]rune
 }
 
 type Position struct {
@@ -36,18 +42,19 @@ func main() {
 			break
 		}
 		fmt.Print("\033[10A")
-		board.grid[snake.Y][snake.X] = snake.Symbol
-		Render(board)
-		time.Sleep(200 * time.Millisecond)
-		if snake.X >= len(board.grid)-1 {
+		err := SetCell(Position{X: snake.X, Y: 0}, board, snake.Symbol)
+		if err != nil {
+			fmt.Println("Error:", err)
 			break
 		}
+		Render(board)
+		time.Sleep(200 * time.Millisecond)
 		board.grid[snake.Y][snake.X] = '·'
 		snake.X++
 	}
 }
 
-// main render function
+// render the board
 func Render(b *Board) {
 	for _, row := range b.grid {
 		for _, val := range row {
@@ -57,12 +64,30 @@ func Render(b *Board) {
 	}
 }
 
+// initialize an empty board
 func NewBoard() *Board {
 	b := &Board{}
-	for i := range 10 {
-		for j := range 10 {
+	for i := range len(b.grid) {
+		for j := range len(b.grid[0]) {
 			b.grid[j][i] = '·'
 		}
 	}
 	return b
+}
+
+// set the value of a board cell
+func SetCell(position Position, b *Board, symbol rune) error {
+	height := len(b.grid)
+	width := len(b.grid[0])
+
+	outOfBoundX := position.X < 0 || position.X > width
+	outOfBoundY := position.Y < 0 || position.Y > height
+
+	if outOfBoundX || outOfBoundY {
+		return errors.New("position is out of bound")
+	}
+
+	b.grid[position.Y][position.X] = symbol
+
+	return nil
 }
