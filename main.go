@@ -1,14 +1,20 @@
 package main
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 )
 
 const (
-	Rows = 10
-	Cols = 10
+	Rows        = 10
+	Cols        = 10
+	CursorHome  = "\033[H"
+	ClearScreen = "\033[2J"
+	HideCursor  = "\033[?25l"
+	ShowCursor  = "\033[?25h"
 )
 
 type Board struct {
@@ -26,47 +32,66 @@ type Snake struct {
 }
 
 func main() {
+	print(HideCursor)
 	gameover := false
+	targetFrameTime := 16 * time.Millisecond
 
-	snake := Snake{Symbol: '★',
-		Position: Position{X: 0, Y: 0},
+	board := newBoard()
+	err := render(board)
+	if err != nil {
+		fmt.Printf("error: %v\n", err)
 	}
-
-	board := NewBoard()
-	Render(board)
 
 	// Main game loop
 	for {
+		start := time.Now()
+
 		if gameover {
 			print("GAME OVER")
+			print(ShowCursor)
 			return
 		}
-		fmt.Print("\033[10A")
-		err := SetCell(Position{X: snake.X, Y: 0}, board, snake.Symbol)
+		err := render(board)
 		if err != nil {
-			fmt.Println("Error:", err)
-			gameover = true
-			continue
+			fmt.Printf("error: %v\n", err)
+			break
 		}
-		Render(board)
-		time.Sleep(200 * time.Millisecond)
-		board.grid[snake.Y][snake.X] = '·'
-		snake.X++
+		elapsed := time.Since(start)
+		if elapsed < targetFrameTime {
+			time.Sleep(targetFrameTime - elapsed)
+		}
 	}
 }
 
 // render the board
-func Render(b *Board) {
+func render(b *Board) error {
+	// use buffer to store board updates
+	writer := bufio.NewWriter(os.Stdout)
+
+	// move cursor to (0,0) of termianal
+	_, err := fmt.Fprint(writer, CursorHome)
+	if err != nil {
+		return err
+	}
+
+	// update board
 	for _, row := range b.grid {
 		for _, val := range row {
 			fmt.Printf("%2c", val)
 		}
 		fmt.Println()
 	}
+
+	// flush buffer to stdout in single call to prevent flicker
+	err = writer.Flush()
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // initialize an empty board
-func NewBoard() *Board {
+func newBoard() *Board {
 	b := &Board{}
 	for i := range len(b.grid) {
 		for j := range len(b.grid[0]) {
@@ -77,7 +102,7 @@ func NewBoard() *Board {
 }
 
 // set the value of a board cell
-func SetCell(position Position, b *Board, symbol rune) error {
+func setCell(position Position, b *Board, symbol rune) error {
 	height := len(b.grid)
 	width := len(b.grid[0])
 
