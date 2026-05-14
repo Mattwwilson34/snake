@@ -39,13 +39,14 @@ func main() {
 	for {
 		if gameover {
 			print("GAME OVER")
-			break
+			return
 		}
 		fmt.Print("\033[10A")
 		err := SetCell(Position{X: snake.X, Y: 0}, board, snake.Symbol)
 		if err != nil {
 			fmt.Println("Error:", err)
-			break
+			gameover = true
+			continue
 		}
 		Render(board)
 		time.Sleep(200 * time.Millisecond)
@@ -80,11 +81,11 @@ func SetCell(position Position, b *Board, symbol rune) error {
 	height := len(b.grid)
 	width := len(b.grid[0])
 
-	outOfBoundX := position.X < 0 || position.X > width
-	outOfBoundY := position.Y < 0 || position.Y > height
+	outOfBoundX := position.X < 0 || position.X >= width
+	outOfBoundY := position.Y < 0 || position.Y >= height
 
 	if outOfBoundX || outOfBoundY {
-		return errors.New("position is out of bound")
+		return errors.New("position out of bounds")
 	}
 
 	b.grid[position.Y][position.X] = symbol
