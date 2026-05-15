@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"time"
 )
 
@@ -15,6 +16,7 @@ const (
 	ClearScreen = "\033[2J"
 	HideCursor  = "\033[?25l"
 	ShowCursor  = "\033[?25h"
+	FullBlock   = '█' // U+2588
 )
 
 type Board struct {
@@ -32,12 +34,45 @@ type Snake struct {
 }
 
 func main() {
-	print(HideCursor)
+
+	// Switch to raw mode (Unix/macOS) to allow instant stdin
+	err := exec.Command("stty", "-F", "/dev/tty", "raw", "-echo").Run()
+	if err != nil {
+		fmt.Printf("error: %v\n", err)
+	}
+	// TODO: Defer function error handling is confusing review concept
+	defer func() {
+		err := exec.Command("stty", "-F", "/dev/tty", "-raw", "echo").Run()
+		if err != nil {
+			fmt.Printf("error: %v\n", err)
+		}
+	}()
+	fmt.Print(ClearScreen)
+	fmt.Print(HideCursor)
+	defer fmt.Print(ShowCursor)
+
+	inputChan := make(chan string)
+	go func() {
+		for {
+			b := make([]byte, 1)
+			_, err := os.Stdin.Read(b)
+			if err != nil {
+				fmt.Printf("error: %v\n", err)
+			}
+			inputChan <- string(b)
+		}
+	}()
+
 	gameover := false
 	targetFrameTime := 16 * time.Millisecond
 
 	board := newBoard()
-	err := render(board)
+	snake := Snake{Position: Position{X: 5, Y: 5}, Symbol: FullBlock}
+	err = setCell(snake.Position, board, snake.Symbol)
+	if err != nil {
+		fmt.Printf("error: %v\n", err)
+	}
+	err = render(board)
 	if err != nil {
 		fmt.Printf("error: %v\n", err)
 	}
@@ -45,20 +80,28 @@ func main() {
 	// Main game loop
 	for {
 		start := time.Now()
-
-		if gameover {
-			print("GAME OVER")
-			print(ShowCursor)
-			return
-		}
-		err := render(board)
-		if err != nil {
-			fmt.Printf("error: %v\n", err)
-			break
-		}
-		elapsed := time.Since(start)
-		if elapsed < targetFrameTime {
-			time.Sleep(targetFrameTime - elapsed)
+		select {
+		case key := <-inputChan:
+			fmt.Print(key)
+			if key == "q" {
+				fmt.Print("\r\nQ was pressed. Exiting...\r\n")
+				return
+			}
+		default:
+			if gameover {
+				print("GAME OVER")
+				print(ShowCursor)
+				return
+			}
+			err := render(board)
+			if err != nil {
+				fmt.Printf("error: %v\n", err)
+				break
+			}
+			elapsed := time.Since(start)
+			if elapsed < targetFrameTime {
+				time.Sleep(targetFrameTime - elapsed)
+			}
 		}
 	}
 }
@@ -77,9 +120,15 @@ func render(b *Board) error {
 	// update board
 	for _, row := range b.grid {
 		for _, val := range row {
-			fmt.Printf("%2c", val)
+			_, err = fmt.Fprintf(writer, "%2c", val)
+			if err != nil {
+				return err
+			}
 		}
-		fmt.Println()
+		_, err = fmt.Fprint(writer, "\r\n")
+		if err != nil {
+			return err
+		}
 	}
 
 	// flush buffer to stdout in single call to prevent flicker
