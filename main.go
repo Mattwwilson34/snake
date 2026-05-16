@@ -12,13 +12,16 @@ import (
 )
 
 const (
-	LargeBoard  = 60
-	MediumBoard = 40
+	// board sizes
 	SmallBoard  = 20
+	MediumBoard = 40
+	LargeBoard  = 60
+	// terminal operators
 	CursorHome  = "\033[H"
 	ClearScreen = "\033[2J"
 	HideCursor  = "\033[?25l"
 	ShowCursor  = "\033[?25h"
+	// symbols
 	FullBlock   = '█' // U+2588
 	BoardSymbol = '·'
 )
