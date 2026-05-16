@@ -2,11 +2,13 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"time"
+
+	"golang.org/x/term"
 )
 
 const (
@@ -34,74 +36,39 @@ type Snake struct {
 }
 
 func main() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	// Switch to raw mode (Unix/macOS) to allow instant stdin
-	err := exec.Command("stty", "-F", "/dev/tty", "raw", "-echo").Run()
-	if err != nil {
-		fmt.Printf("error: %v\n", err)
-	}
-	// TODO: Defer function error handling is confusing review concept
-	defer func() {
-		err := exec.Command("stty", "-F", "/dev/tty", "-raw", "echo").Run()
-		if err != nil {
-			fmt.Printf("error: %v\n", err)
-		}
-	}()
-	fmt.Print(ClearScreen)
-	fmt.Print(HideCursor)
-	defer fmt.Print(ShowCursor)
+	cleanup, _ := setupTerminal()
+	defer cleanup()
 
 	inputChan := make(chan string)
-	go func() {
-		for {
-			b := make([]byte, 1)
-			_, err := os.Stdin.Read(b)
-			if err != nil {
-				fmt.Printf("error: %v\n", err)
-			}
-			inputChan <- string(b)
-		}
-	}()
+	startInputReader(ctx, inputChan)
 
 	gameover := false
 	targetFrameTime := 16 * time.Millisecond
-
 	board := newBoard()
-	snake := Snake{Position: Position{X: 5, Y: 5}, Symbol: FullBlock}
-	err = setCell(snake.Position, board, snake.Symbol)
-	if err != nil {
-		fmt.Printf("error: %v\n", err)
-	}
-	err = render(board)
-	if err != nil {
-		fmt.Printf("error: %v\n", err)
-	}
 
 	// Main game loop
 	for {
 		start := time.Now()
-		select {
-		case key := <-inputChan:
-			fmt.Print(key)
-			if key == "q" {
-				fmt.Print("\r\nQ was pressed. Exiting...\r\n")
-				return
-			}
-		default:
-			if gameover {
-				print("GAME OVER")
-				print(ShowCursor)
-				return
-			}
-			err := render(board)
-			if err != nil {
-				fmt.Printf("error: %v\n", err)
-				break
-			}
-			elapsed := time.Since(start)
-			if elapsed < targetFrameTime {
-				time.Sleep(targetFrameTime - elapsed)
-			}
+		if gameover {
+			print("GAME OVER")
+			print(ShowCursor)
+			return
+		}
+		userQuit := handleInput(inputChan)
+		if userQuit {
+			return
+		}
+		err := render(board)
+		if err != nil {
+			fmt.Printf("error: %v\n", err)
+			break
+		}
+		elapsed := time.Since(start)
+		if elapsed < targetFrameTime {
+			time.Sleep(targetFrameTime - elapsed)
 		}
 	}
 }
@@ -111,7 +78,7 @@ func render(b *Board) error {
 	// use buffer to store board updates
 	writer := bufio.NewWriter(os.Stdout)
 
-	// move cursor to (0,0) of termianal
+	// move cursor to (0,0) of terminal
 	_, err := fmt.Fprint(writer, CursorHome)
 	if err != nil {
 		return err
@@ -165,4 +132,62 @@ func setCell(position Position, b *Board, symbol rune) error {
 	b.grid[position.Y][position.X] = symbol
 
 	return nil
+}
+
+// set terminal to raw, clear screen, and hide cursor
+func setupTerminal() (func(), error) {
+	fd := int(os.Stdin.Fd())
+	if !term.IsTerminal(fd) {
+		return nil, errors.New("not a terminal")
+	}
+
+	oldState, err := term.MakeRaw(fd)
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Print(ClearScreen, HideCursor)
+
+	return func() {
+		fmt.Print(ShowCursor)
+		_ = term.Restore(fd, oldState)
+	}, nil
+}
+
+// start a stdin reader in a go routine
+func startInputReader(ctx context.Context, inputChan chan string) {
+	go func() {
+		defer close(inputChan)
+		b := make([]byte, 1)
+		for {
+			_, err := os.Stdin.Read(b)
+			if err != nil {
+				return
+			}
+
+			select {
+			case inputChan <- string(b):
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
+// handle user input
+func handleInput(inputChan chan string) bool {
+	select {
+	case key, ok := <-inputChan:
+		if !ok {
+			return true
+		}
+		switch key {
+		case "q":
+			fmt.Println("Exiting Game...")
+			return true
+		}
+	default:
+		return false
+	}
+	return false
 }
