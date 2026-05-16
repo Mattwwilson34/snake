@@ -118,7 +118,7 @@ func newBoard(size int) *Board {
 	}
 	for i := range b.grid {
 		b.grid[i] = make([]rune, size)
-		for j := range len(b.grid[0]) {
+		for j := range len(b.grid[i]) {
 			b.grid[i][j] = BoardSymbol
 		}
 	}
@@ -126,19 +126,23 @@ func newBoard(size int) *Board {
 }
 
 // set the value of a board cell
-func setCell(position Position, b *Board, symbol rune) error {
-	height := len(b.grid)
-	width := len(b.grid[0])
+func (b *Board) SetCell(pos Position, symbol rune) error {
 
-	outOfBoundX := position.X < 0 || position.X >= width
-	outOfBoundY := position.Y < 0 || position.Y >= height
-
-	if outOfBoundX || outOfBoundY {
-		return errors.New("position out of bounds")
+	// handle no board
+	if len(b.grid) == 0 {
+		return errors.New("board uninitialized")
+	}
+	// out of bounds Y
+	if pos.Y < 0 || pos.Y >= len(b.grid) {
+		return errors.New("position out of bounds (Y)")
+	}
+	// out of bounds X
+	if pos.X < 0 || pos.X >= len(b.grid[pos.Y]) {
+		return errors.New("position out of bounds (X)")
 	}
 
-	b.grid[position.Y][position.X] = symbol
-
+	// safe to update board cell
+	b.grid[pos.Y][pos.X] = symbol
 	return nil
 }
 
