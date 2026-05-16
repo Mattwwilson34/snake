@@ -12,17 +12,19 @@ import (
 )
 
 const (
-	Rows        = 10
-	Cols        = 10
+	LargeBoard  = 60
+	MediumBoard = 40
+	SmallBoard  = 20
 	CursorHome  = "\033[H"
 	ClearScreen = "\033[2J"
 	HideCursor  = "\033[?25l"
 	ShowCursor  = "\033[?25h"
 	FullBlock   = '█' // U+2588
+	BoardSymbol = '·'
 )
 
 type Board struct {
-	grid [Cols][Rows]rune
+	grid [][]rune
 }
 
 type Position struct {
@@ -36,18 +38,21 @@ type Snake struct {
 }
 
 func main() {
+	// context to kill go routines on exit
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// setup terminal for game
 	cleanup, _ := setupTerminal()
 	defer cleanup()
 
+	// start go routine to listen for user input
 	inputChan := make(chan string)
-	startInputReader(ctx, inputChan)
+	startInputListener(ctx, inputChan)
 
 	gameover := false
 	targetFrameTime := 16 * time.Millisecond
-	board := newBoard()
+	board := newBoard(SmallBoard)
 
 	// Main game loop
 	for {
@@ -107,11 +112,14 @@ func render(b *Board) error {
 }
 
 // initialize an empty board
-func newBoard() *Board {
-	b := &Board{}
-	for i := range len(b.grid) {
+func newBoard(size int) *Board {
+	b := &Board{
+		grid: make([][]rune, size),
+	}
+	for i := range b.grid {
+		b.grid[i] = make([]rune, size)
 		for j := range len(b.grid[0]) {
-			b.grid[j][i] = '·'
+			b.grid[i][j] = BoardSymbol
 		}
 	}
 	return b
@@ -155,7 +163,7 @@ func setupTerminal() (func(), error) {
 }
 
 // start a stdin reader in a go routine
-func startInputReader(ctx context.Context, inputChan chan string) {
+func startInputListener(ctx context.Context, inputChan chan string) {
 	go func() {
 		defer close(inputChan)
 		b := make([]byte, 1)
@@ -183,7 +191,6 @@ func handleInput(inputChan chan string) bool {
 		}
 		switch key {
 		case "q":
-			fmt.Println("Exiting Game...")
 			return true
 		}
 	default:
