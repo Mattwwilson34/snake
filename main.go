@@ -27,7 +27,7 @@ const (
 	HideCursor  = "\033[?25l"
 	ShowCursor  = "\033[?25h"
 	// symbols
-	FullBlock   = '█' // U+2588
+	SnakeSymbol = '▣' // U+2588
 	BoardSymbol = '·'
 )
 
@@ -43,6 +43,18 @@ type Position struct {
 type Snake struct {
 	Position
 	Symbol rune
+	Size   int
+}
+
+type Message struct {
+	Message     string
+	Expiraton   int
+	DisplayTime int
+}
+
+type GameInfo struct {
+	Message        Message
+	LastKeyPressed string
 }
 
 func main() {
@@ -69,6 +81,26 @@ func main() {
 	gameover := false
 	targetFrameTime := 16 * time.Millisecond
 
+	snake := &Snake{
+		Position: Position{X: 0, Y: 0},
+		Symbol:   SnakeSymbol,
+		Size:     1,
+	}
+	err = board.SetCell(snake.Position, SnakeSymbol)
+	if err != nil {
+		fmt.Printf("error: %v\n", err)
+		return
+	}
+
+	gameInfo := &GameInfo{
+		Message: Message{
+			Message:     "",
+			Expiraton:   3600,
+			DisplayTime: 0,
+		},
+		LastKeyPressed: "",
+	}
+
 	// Main game loop
 	for {
 		start := time.Now()
@@ -77,11 +109,11 @@ func main() {
 			print(ShowCursor)
 			return
 		}
-		userQuit := handleInput(inputChan)
+		userQuit := handleInput(inputChan, board, snake, gameInfo)
 		if userQuit {
 			return
 		}
-		err := render(board)
+		err := render(board, gameInfo)
 		if err != nil {
 			fmt.Printf("error: %v\n", err)
 			break
@@ -90,11 +122,19 @@ func main() {
 		if elapsed < targetFrameTime {
 			time.Sleep(targetFrameTime - elapsed)
 		}
+		if gameInfo.Message.Message != "" {
+			gameInfo.Message.DisplayTime++
+		}
+		// reset user message if it has expired
+		if gameInfo.Message.DisplayTime >= gameInfo.Message.Expiraton {
+			gameInfo.Message.Message = ""
+			gameInfo.Message.DisplayTime = 0
+		}
 	}
 }
 
 // render the board
-func render(b *Board) error {
+func render(b *Board, gameInfo *GameInfo) error {
 	// use buffer to store board updates
 	writer := bufio.NewWriter(os.Stdout)
 
@@ -116,6 +156,18 @@ func render(b *Board) error {
 		if err != nil {
 			return err
 		}
+	}
+
+	// print any user message
+	_, err = fmt.Fprintf(writer, "message: %v\r\n", gameInfo.Message.Message)
+	if err != nil {
+		return err
+	}
+
+	// print last key pressed
+	_, err = fmt.Fprintf(writer, "last key pressed: %v", gameInfo.LastKeyPressed)
+	if err != nil {
+		return err
 	}
 
 	// flush buffer to stdout in single call to prevent flicker
@@ -161,6 +213,26 @@ func (b *Board) SetCell(pos Position, symbol rune) error {
 	return nil
 }
 
+func moveSnakeRight(b *Board, s *Snake, g *GameInfo) error {
+	prevPosition := s.Position
+	newPosition := Position{X: prevPosition.X + 1, Y: prevPosition.Y}
+	s.Position = newPosition
+
+	// move snake
+	err := b.SetCell(newPosition, s.Symbol)
+	if err != nil {
+		return err
+	}
+
+	// reset old snake position
+	err = b.SetCell(prevPosition, BoardSymbol)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // set terminal to raw, clear screen, and hide cursor
 func setupTerminal() (func(), error) {
 	fd := int(os.Stdin.Fd())
@@ -202,15 +274,22 @@ func startInputListener(ctx context.Context, inputChan chan string) {
 }
 
 // handle user input
-func handleInput(inputChan chan string) bool {
+func handleInput(inputChan chan string, b *Board, s *Snake, g *GameInfo) bool {
 	select {
 	case key, ok := <-inputChan:
 		if !ok {
 			return true
 		}
+		fmt.Println(key)
 		switch key {
 		case "q":
 			return true
+		case "l":
+			err := moveSnakeRight(b, s, g)
+			if err != nil {
+				fmt.Printf("error: %v\n", err)
+				return false
+			}
 		}
 	default:
 		return false
@@ -232,6 +311,7 @@ func parseBoardSize(input string) (BoardSize, bool) {
 	}
 }
 
+// prompt the user for board size
 func promptForBoardSize() (BoardSize, error) {
 	fmt.Println("Select a board size.")
 	fmt.Println("1. (s)mall, 2. (m)edium, 3. (l)arge")
