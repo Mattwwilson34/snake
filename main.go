@@ -6,16 +6,21 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"golang.org/x/term"
 )
 
+type BoardSize int
+
 const (
-	// board sizes
-	SmallBoard  = 20
-	MediumBoard = 40
-	LargeBoard  = 60
+	SmallBoard  = 15
+	MediumBoard = 30
+	LargeBoard  = 45
+)
+
+const (
 	// terminal operators
 	CursorHome  = "\033[H"
 	ClearScreen = "\033[2J"
@@ -45,6 +50,14 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// prompt user for board size
+	boardSize, err := promptForBoardSize()
+	if err != nil {
+		fmt.Printf("error: %v\n", err)
+		return
+	}
+	board := newBoard(boardSize)
+
 	// setup terminal for game
 	cleanup, _ := setupTerminal()
 	defer cleanup()
@@ -55,7 +68,6 @@ func main() {
 
 	gameover := false
 	targetFrameTime := 16 * time.Millisecond
-	board := newBoard(SmallBoard)
 
 	// Main game loop
 	for {
@@ -115,7 +127,7 @@ func render(b *Board) error {
 }
 
 // initialize an empty board
-func newBoard(size int) *Board {
+func newBoard(size BoardSize) *Board {
 	b := &Board{
 		grid: make([][]rune, size),
 	}
@@ -204,4 +216,33 @@ func handleInput(inputChan chan string) bool {
 		return false
 	}
 	return false
+}
+
+// parse input into numerical board size
+func parseBoardSize(input string) (BoardSize, bool) {
+	switch input {
+	case "s", "small", "1":
+		return SmallBoard, true
+	case "m", "medium", "2":
+		return MediumBoard, true
+	case "l", "large", "3":
+		return LargeBoard, true
+	default:
+		return 0, false
+	}
+}
+
+func promptForBoardSize() (BoardSize, error) {
+	fmt.Println("Select a board size.")
+	fmt.Println("1. (s)mall, 2. (m)edium, 3. (l)arge")
+	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Scan()
+	input := scanner.Text()
+	cleanInput := strings.ToLower(strings.TrimSpace(input))
+	boardSize, success := parseBoardSize(cleanInput)
+	if !success {
+		return 0, errors.New("failed to parse board size from user input")
+	}
+	return boardSize, nil
+
 }
