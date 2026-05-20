@@ -25,7 +25,7 @@ const (
 	HideCursor  = "\033[?25l"
 	ShowCursor  = "\033[?25h"
 	// symbols
-	SnakeSymbol = '▣' // U+2588
+	SnakeSymbol = '▣'
 	BoardSymbol = '·'
 )
 
@@ -84,14 +84,9 @@ func main() {
 	targetFrameTime := 16 * time.Millisecond
 
 	snake := &Snake{
-		Position: Position{X: 0, Y: 0},
+		Position: Position{X: 1, Y: 1},
 		Symbol:   SnakeSymbol,
 		Size:     1,
-	}
-	err = board.SetCell(snake.Position, SnakeSymbol)
-	if err != nil {
-		fmt.Printf("error: %v\n", err)
-		return
 	}
 
 	// Main game loop
@@ -102,11 +97,11 @@ func main() {
 			print(ShowCursor)
 			return
 		}
-		userQuit := handleInput(inputChan, board, snake, log)
+		userQuit := handleInput(inputChan, snake, log)
 		if userQuit {
 			return
 		}
-		err := render(layout, board, help, log)
+		err := render(layout, board, snake, help, log)
 		if err != nil {
 			fmt.Printf("error: %v\n", err)
 			break
@@ -146,6 +141,19 @@ func (log *Log) Render(layout *Layout, writer *bufio.Writer) error {
 	return nil
 }
 
+func (snake *Snake) Render(writer *bufio.Writer) error {
+	// move cursor to snake position
+	cursorErr := MoveCursor(snake.X, snake.Y, writer)
+	if cursorErr != nil {
+		return cursorErr
+	}
+	_, writeErr := fmt.Fprintf(writer, "%2c", snake.Symbol)
+	if writeErr != nil {
+		return writeErr
+	}
+	return nil
+}
+
 func (board *Board) Render(layout *Layout, writer *bufio.Writer) error {
 	// move cursor to start of board region
 	cursorErr := MoveCursor(layout.BoardRegion.X, layout.BoardRegion.Y, writer)
@@ -171,8 +179,8 @@ func (board *Board) Render(layout *Layout, writer *bufio.Writer) error {
 
 }
 
-// render the board
-func render(layout *Layout, board *Board, help *Help, log *Log) (err error) {
+// main render function
+func render(layout *Layout, board *Board, snake *Snake, help *Help, log *Log) (err error) {
 	// use buffer to store board updates
 	writer := bufio.NewWriter(os.Stdout)
 
@@ -183,7 +191,12 @@ func render(layout *Layout, board *Board, help *Help, log *Log) (err error) {
 		}
 	}()
 
+	log.Content = fmt.Sprintf("%#v\n", snake)
 	err = board.Render(layout, writer)
+	if err != nil {
+		return err
+	}
+	err = snake.Render(writer)
 	if err != nil {
 		return err
 	}
@@ -220,12 +233,8 @@ func (board *Board) SetCell(pos Position, symbol rune) error {
 		return errors.New("board uninitialized")
 	}
 	// out of bounds Y
-	if pos.Y < 0 || pos.Y >= len(board.grid) {
-		return errors.New("position out of bounds (Y)")
-	}
-	// out of bounds X
-	if pos.X < 0 || pos.X >= len(board.grid[pos.Y]) {
-		return errors.New("position out of bounds (X)")
+	if board.IsOutOfBounds(pos.X, pos.Y) {
+		return errors.New("position out of bounds")
 	}
 
 	// safe to update board cell
@@ -233,24 +242,16 @@ func (board *Board) SetCell(pos Position, symbol rune) error {
 	return nil
 }
 
-func moveSnakeRight(b *Board, s *Snake) error {
-	prevPosition := s.Position
-	newPosition := Position{X: prevPosition.X + 1, Y: prevPosition.Y}
-	s.Position = newPosition
-
-	// move snake
-	err := b.SetCell(newPosition, s.Symbol)
-	if err != nil {
-		return err
+func (board *Board) IsOutOfBounds(x, y int) bool {
+	// out of bounds Y
+	if y < 0 || y >= len(board.grid) {
+		return true
 	}
-
-	// reset old snake position
-	err = b.SetCell(prevPosition, BoardSymbol)
-	if err != nil {
-		return err
+	// out of bounds X
+	if x < 0 || x >= len(board.grid[y]) {
+		return true
 	}
-
-	return nil
+	return false
 }
 
 // set terminal to raw, clear screen, and hide cursor
@@ -273,28 +274,8 @@ func setupTerminal() (func(), error) {
 	}, nil
 }
 
-// start a stdin reader in a go routine
-func startInputListener(ctx context.Context, inputChan chan string) {
-	go func() {
-		defer close(inputChan)
-		b := make([]byte, 1)
-		for {
-			_, err := os.Stdin.Read(b)
-			if err != nil {
-				return
-			}
-
-			select {
-			case inputChan <- string(b):
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-}
-
 // handle user input
-func handleInput(inputChan chan string, b *Board, s *Snake, log *Log) bool {
+func handleInput(inputChan chan string, s *Snake, log *Log) bool {
 	select {
 	case key, ok := <-inputChan:
 		if !ok {
@@ -302,14 +283,23 @@ func handleInput(inputChan chan string, b *Board, s *Snake, log *Log) bool {
 		}
 		log.Content = fmt.Sprintf("last key pressed: %s", key)
 		switch key {
+
+		// quit game
 		case "q":
 			return true
+		// snake movements
+		// up
+		case "k":
+			s.Y = s.Y - 1
+		// down
+		case "j":
+			s.Y = s.Y + 1
+		// left
+		case "h":
+			s.X = s.X - 2
+		// right
 		case "l":
-			err := moveSnakeRight(b, s)
-			if err != nil {
-				fmt.Printf("error: %v\n", err)
-				return false
-			}
+			s.X = s.X + 2
 		}
 	default:
 		return false
@@ -355,4 +345,24 @@ func MoveCursor(x, y int, writer *bufio.Writer) error {
 		return cursorErr
 	}
 	return nil
+}
+
+// start a stdin reader in a go routine
+func startInputListener(ctx context.Context, inputChan chan string) {
+	go func() {
+		defer close(inputChan)
+		b := make([]byte, 1)
+		for {
+			_, err := os.Stdin.Read(b)
+			if err != nil {
+				return
+			}
+
+			select {
+			case inputChan <- string(b):
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 }
