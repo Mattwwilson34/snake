@@ -56,21 +56,21 @@ func main() {
 	defer cancel()
 
 	// prompt user for board size
-	boardSize, err := promptForBoardSize()
+	boardWidth, boardHeight, err := promptForBoardSize()
 	if err != nil {
 		fmt.Printf("error: %v\n", err)
 		return
 	}
 
 	// current board is square can update later to accommodate new shapes
-	layout := NewLayout(boardSize, boardSize)
+	layout := NewLayout(boardWidth, boardHeight)
 	fmt.Printf("%#v\n", layout)
 
 	help := &Help{
 		Content: "[q] Quit",
 	}
 	log := &Log{}
-	board := newBoard(boardSize)
+	board := newBoard(boardWidth, boardHeight)
 
 	// setup terminal for game
 	cleanup, _ := setupTerminal()
@@ -80,7 +80,6 @@ func main() {
 	inputChan := make(chan string)
 	startInputListener(ctx, inputChan)
 
-	gameover := false
 	targetFrameTime := 16 * time.Millisecond
 
 	snake := &Snake{
@@ -92,13 +91,12 @@ func main() {
 	// Main game loop
 	for {
 		start := time.Now()
-		if gameover {
-			print("GAME OVER")
-			print(ShowCursor)
+		userQuit, gameOver := handleInput(inputChan, board, snake, log)
+		if userQuit {
 			return
 		}
-		userQuit := handleInput(inputChan, snake, log)
-		if userQuit {
+		if gameOver {
+			log.Content = "GAME OVER"
 			return
 		}
 		err := render(layout, board, snake, help, log)
@@ -212,12 +210,12 @@ func render(layout *Layout, board *Board, snake *Snake, help *Help, log *Log) (e
 }
 
 // initialize an empty board
-func newBoard(size int) *Board {
+func newBoard(width, height int) *Board {
 	b := &Board{
-		grid: make([][]rune, size),
+		grid: make([][]rune, height),
 	}
 	for i := range b.grid {
-		b.grid[i] = make([]rune, size)
+		b.grid[i] = make([]rune, width)
 		for j := range len(b.grid[i]) {
 			b.grid[i][j] = BoardSymbol
 		}
@@ -225,30 +223,11 @@ func newBoard(size int) *Board {
 	return b
 }
 
-// set the value of a board cell
-func (board *Board) SetCell(pos Position, symbol rune) error {
-
-	// handle no board
-	if len(board.grid) == 0 {
-		return errors.New("board uninitialized")
-	}
-	// out of bounds Y
-	if board.IsOutOfBounds(pos.X, pos.Y) {
-		return errors.New("position out of bounds")
-	}
-
-	// safe to update board cell
-	board.grid[pos.Y][pos.X] = symbol
-	return nil
-}
-
-func (board *Board) IsOutOfBounds(x, y int) bool {
-	// out of bounds Y
-	if y < 0 || y >= len(board.grid) {
+func (board *Board) IsOutOfBounds(p Position) bool {
+	if p.Y < 0 || p.Y > len(board.grid) {
 		return true
 	}
-	// out of bounds X
-	if x < 0 || x >= len(board.grid[y]) {
+	if p.X < 0 || p.X/2 > len(board.grid[p.Y]) {
 		return true
 	}
 	return false
@@ -275,36 +254,58 @@ func setupTerminal() (func(), error) {
 }
 
 // handle user input
-func handleInput(inputChan chan string, s *Snake, log *Log) bool {
+func handleInput(
+	inputChan chan string,
+	b *Board,
+	s *Snake,
+	log *Log,
+) (userQuit bool, gameOver bool) {
 	select {
 	case key, ok := <-inputChan:
 		if !ok {
-			return true
+			return false, true
 		}
 		log.Content = fmt.Sprintf("last key pressed: %s", key)
 		switch key {
 
 		// quit game
 		case "q":
-			return true
+			return true, false
 		// snake movements
 		// up
 		case "k":
-			s.Y = s.Y - 1
+			nextMove := Position{X: s.X, Y: s.Y - 1}
+			if b.IsOutOfBounds(nextMove) {
+				return false, true
+			}
+			s.Position = nextMove
 		// down
 		case "j":
-			s.Y = s.Y + 1
+			nextMove := Position{X: s.X, Y: s.Y + 1}
+			if b.IsOutOfBounds(nextMove) {
+				return false, true
+			}
+			s.Position = nextMove
 		// left
 		case "h":
-			s.X = s.X - 2
-		// right
+			// we use %2c to render which = 2 char padding
+			nextMove := Position{X: s.X - 2, Y: s.Y}
+			if b.IsOutOfBounds(nextMove) {
+				return false, true
+			}
+			s.Position = nextMove
 		case "l":
-			s.X = s.X + 2
+			// we use %2c to render which = 2 char padding
+			nextMove := Position{X: s.X + 2, Y: s.Y}
+			if b.IsOutOfBounds(nextMove) {
+				return false, true
+			}
+			s.Position = nextMove
 		}
 	default:
-		return false
+		return false, false
 	}
-	return false
+	return false, false
 }
 
 // parse input into numerical board size
@@ -322,7 +323,7 @@ func parseBoardSize(input string) (int, bool) {
 }
 
 // prompt the user for board size
-func promptForBoardSize() (int, error) {
+func promptForBoardSize() (width, height int, err error) {
 	fmt.Println("Select a board size.")
 	fmt.Println("1. (s)mall, 2. (m)edium, 3. (l)arge")
 	scanner := bufio.NewScanner(os.Stdin)
@@ -331,9 +332,11 @@ func promptForBoardSize() (int, error) {
 	cleanInput := strings.ToLower(strings.TrimSpace(input))
 	boardSize, success := parseBoardSize(cleanInput)
 	if !success {
-		return 0, errors.New("failed to parse board size from user input")
+		return 0, 0, errors.New("failed to parse board size from user input")
 	}
-	return boardSize, nil
+	height = boardSize
+	width = boardSize * 2
+	return width, height, nil
 
 }
 
