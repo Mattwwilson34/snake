@@ -12,8 +12,6 @@ import (
 	"golang.org/x/term"
 )
 
-type BoardSize int
-
 const (
 	SmallBoard  = 15
 	MediumBoard = 30
@@ -34,6 +32,12 @@ const (
 type Board struct {
 	grid [][]rune
 }
+type Help struct {
+	Content string
+}
+type Log struct {
+	Content string
+}
 
 type Position struct {
 	X, Y int
@@ -44,17 +48,6 @@ type Snake struct {
 	Position
 	Symbol rune
 	Size   int
-}
-
-type Message struct {
-	Message     string
-	Expiraton   int
-	DisplayTime int
-}
-
-type GameInfo struct {
-	Message        Message
-	LastKeyPressed string
 }
 
 func main() {
@@ -68,6 +61,15 @@ func main() {
 		fmt.Printf("error: %v\n", err)
 		return
 	}
+
+	// current board is square can update later to accommodate new shapes
+	layout := NewLayout(boardSize, boardSize)
+	fmt.Printf("%#v\n", layout)
+
+	help := &Help{
+		Content: "[q] Quit",
+	}
+	log := &Log{}
 	board := newBoard(boardSize)
 
 	// setup terminal for game
@@ -92,15 +94,6 @@ func main() {
 		return
 	}
 
-	gameInfo := &GameInfo{
-		Message: Message{
-			Message:     "",
-			Expiraton:   3600,
-			DisplayTime: 0,
-		},
-		LastKeyPressed: "",
-	}
-
 	// Main game loop
 	for {
 		start := time.Now()
@@ -109,11 +102,11 @@ func main() {
 			print(ShowCursor)
 			return
 		}
-		userQuit := handleInput(inputChan, board, snake, gameInfo)
+		userQuit := handleInput(inputChan, board, snake, log)
 		if userQuit {
 			return
 		}
-		err := render(board, gameInfo)
+		err := render(layout, board, help, log)
 		if err != nil {
 			fmt.Printf("error: %v\n", err)
 			break
@@ -122,56 +115,83 @@ func main() {
 		if elapsed < targetFrameTime {
 			time.Sleep(targetFrameTime - elapsed)
 		}
-		if gameInfo.Message.Message != "" {
-			gameInfo.Message.DisplayTime++
-		}
-		// reset user message if it has expired
-		if gameInfo.Message.DisplayTime >= gameInfo.Message.Expiraton {
-			gameInfo.Message.Message = ""
-			gameInfo.Message.DisplayTime = 0
-		}
 	}
 }
 
-// render the board
-func render(b *Board, gameInfo *GameInfo) error {
-	// use buffer to store board updates
-	writer := bufio.NewWriter(os.Stdout)
-
-	// move cursor to (0,0) of terminal
-	_, err := fmt.Fprint(writer, CursorHome)
-	if err != nil {
-		return err
+func (help *Help) Render(layout *Layout, writer *bufio.Writer) error {
+	// move cursor to start of help region
+	cursorErr := MoveCursor(layout.HelpRegion.X, layout.HelpRegion.Y, writer)
+	if cursorErr != nil {
+		return cursorErr
 	}
 
-	// update board
-	for _, row := range b.grid {
+	_, printErr := fmt.Fprint(writer, help.Content)
+	if printErr != nil {
+		return printErr
+	}
+	return nil
+}
+
+func (log *Log) Render(layout *Layout, writer *bufio.Writer) error {
+	// move cursor to start of log region
+	cursorErr := MoveCursor(layout.LogRegion.X, layout.LogRegion.Y, writer)
+	if cursorErr != nil {
+		return cursorErr
+	}
+
+	_, printErr := fmt.Fprint(writer, log.Content)
+	if printErr != nil {
+		return printErr
+	}
+	return nil
+}
+
+func (board *Board) Render(layout *Layout, writer *bufio.Writer) error {
+	// move cursor to start of board region
+	cursorErr := MoveCursor(layout.BoardRegion.X, layout.BoardRegion.Y, writer)
+	if cursorErr != nil {
+		return cursorErr
+	}
+
+	// write board to buffer
+	for _, row := range board.grid {
 		for _, val := range row {
-			_, err = fmt.Fprintf(writer, "%2c", val)
+			_, err := fmt.Fprintf(writer, "%2c", val)
 			if err != nil {
 				return err
 			}
 		}
-		_, err = fmt.Fprint(writer, "\r\n")
+		_, err := fmt.Fprint(writer, "\r\n")
 		if err != nil {
 			return err
 		}
 	}
 
-	// print any user message
-	_, err = fmt.Fprintf(writer, "message: %v\r\n", gameInfo.Message.Message)
+	return nil
+
+}
+
+// render the board
+func render(layout *Layout, board *Board, help *Help, log *Log) (err error) {
+	// use buffer to store board updates
+	writer := bufio.NewWriter(os.Stdout)
+
+	// flush entire screen update once at func return
+	defer func() {
+		if flushErr := writer.Flush(); err == nil {
+			err = flushErr
+		}
+	}()
+
+	err = board.Render(layout, writer)
 	if err != nil {
 		return err
 	}
-
-	// print last key pressed
-	_, err = fmt.Fprintf(writer, "last key pressed: %v", gameInfo.LastKeyPressed)
+	err = help.Render(layout, writer)
 	if err != nil {
 		return err
 	}
-
-	// flush buffer to stdout in single call to prevent flicker
-	err = writer.Flush()
+	err = log.Render(layout, writer)
 	if err != nil {
 		return err
 	}
@@ -179,7 +199,7 @@ func render(b *Board, gameInfo *GameInfo) error {
 }
 
 // initialize an empty board
-func newBoard(size BoardSize) *Board {
+func newBoard(size int) *Board {
 	b := &Board{
 		grid: make([][]rune, size),
 	}
@@ -193,27 +213,27 @@ func newBoard(size BoardSize) *Board {
 }
 
 // set the value of a board cell
-func (b *Board) SetCell(pos Position, symbol rune) error {
+func (board *Board) SetCell(pos Position, symbol rune) error {
 
 	// handle no board
-	if len(b.grid) == 0 {
+	if len(board.grid) == 0 {
 		return errors.New("board uninitialized")
 	}
 	// out of bounds Y
-	if pos.Y < 0 || pos.Y >= len(b.grid) {
+	if pos.Y < 0 || pos.Y >= len(board.grid) {
 		return errors.New("position out of bounds (Y)")
 	}
 	// out of bounds X
-	if pos.X < 0 || pos.X >= len(b.grid[pos.Y]) {
+	if pos.X < 0 || pos.X >= len(board.grid[pos.Y]) {
 		return errors.New("position out of bounds (X)")
 	}
 
 	// safe to update board cell
-	b.grid[pos.Y][pos.X] = symbol
+	board.grid[pos.Y][pos.X] = symbol
 	return nil
 }
 
-func moveSnakeRight(b *Board, s *Snake, g *GameInfo) error {
+func moveSnakeRight(b *Board, s *Snake) error {
 	prevPosition := s.Position
 	newPosition := Position{X: prevPosition.X + 1, Y: prevPosition.Y}
 	s.Position = newPosition
@@ -274,18 +294,18 @@ func startInputListener(ctx context.Context, inputChan chan string) {
 }
 
 // handle user input
-func handleInput(inputChan chan string, b *Board, s *Snake, g *GameInfo) bool {
+func handleInput(inputChan chan string, b *Board, s *Snake, log *Log) bool {
 	select {
 	case key, ok := <-inputChan:
 		if !ok {
 			return true
 		}
-		fmt.Println(key)
+		log.Content = fmt.Sprintf("last key pressed: %s", key)
 		switch key {
 		case "q":
 			return true
 		case "l":
-			err := moveSnakeRight(b, s, g)
+			err := moveSnakeRight(b, s)
 			if err != nil {
 				fmt.Printf("error: %v\n", err)
 				return false
@@ -298,7 +318,7 @@ func handleInput(inputChan chan string, b *Board, s *Snake, g *GameInfo) bool {
 }
 
 // parse input into numerical board size
-func parseBoardSize(input string) (BoardSize, bool) {
+func parseBoardSize(input string) (int, bool) {
 	switch input {
 	case "s", "small", "1":
 		return SmallBoard, true
@@ -312,7 +332,7 @@ func parseBoardSize(input string) (BoardSize, bool) {
 }
 
 // prompt the user for board size
-func promptForBoardSize() (BoardSize, error) {
+func promptForBoardSize() (int, error) {
 	fmt.Println("Select a board size.")
 	fmt.Println("1. (s)mall, 2. (m)edium, 3. (l)arge")
 	scanner := bufio.NewScanner(os.Stdin)
@@ -325,4 +345,14 @@ func promptForBoardSize() (BoardSize, error) {
 	}
 	return boardSize, nil
 
+}
+
+// move cursor to x,y within buffer
+func MoveCursor(x, y int, writer *bufio.Writer) error {
+	// \033[y;xH tells the terminal to move to row y, column x
+	_, cursorErr := fmt.Fprintf(writer, "\033[%d;%dH", y, x)
+	if cursorErr != nil {
+		return cursorErr
+	}
+	return nil
 }
